@@ -178,15 +178,9 @@ def parse_annotation_xml(xml_path: Path) -> SegmentData:
                 if stop_elem is not None and stop_elem.text:
                     stop_frame = int(stop_elem.text)
 
-    # CRITICAL: If start/stop not in XML, infer from track data
-    if start_frame == 0 and stop_frame == 0:
-        # Will be updated after parsing tracks
-        needs_inference = True
-    else:
-        needs_inference = False
+    # --- START OF REPLACEMENT ---
 
     segment_data = SegmentData(segment_id, start_frame, stop_frame)
-    segment_data._needs_frame_inference = needs_inference
 
     # Parse tracks
     for track_elem in root.findall('track'):
@@ -207,16 +201,39 @@ def parse_annotation_xml(xml_path: Path) -> SegmentData:
         if track.boxes:  # Only add tracks with boxes
             segment_data.tracks.append(track)
 
-    # If frame range wasn't in XML, infer from actual track data
-    if segment_data._needs_frame_inference and segment_data.tracks:
+    # --- NEW ROBUST FRAME CALCULATION ---
+    # ALWAYS verify/calculate frame range from *actual* box data,
+    # as <meta> can be unreliable (e.g., from old task settings).
+    
+    # Store the potentially unreliable meta frames
+    meta_start_frame = segment_data.start_frame
+    meta_stop_frame = segment_data.stop_frame
+
+    if segment_data.tracks:
         all_frames = []
         for track in segment_data.tracks:
             all_frames.extend(track.boxes.keys())
-
+        
         if all_frames:
-            segment_data.start_frame = min(all_frames)
-            segment_data.stop_frame = max(all_frames)
-            print(f"    ⚠️  WARNING: No segment metadata in XML, inferred frames {segment_data.start_frame}-{segment_data.stop_frame} from track data")
+            true_start = min(all_frames)
+            true_stop = max(all_frames)
+            
+            # Check if meta was present but wrong
+            if (meta_start_frame != 0 or meta_stop_frame != 0) and \
+               (meta_start_frame != true_start or meta_stop_frame != true_stop):
+                print(f"    ⚠️  WARNING: XML meta ({meta_start_frame}-{meta_stop_frame}) mismatches")
+                print(f"                 track data ({true_start}-{true_stop}). Using track data.")
+
+            segment_data.start_frame = true_start
+            segment_data.stop_frame = true_stop
+        
+        # else: no tracks, so we keep the (likely 0-0) meta values
+    
+    # else: no tracks, keep meta values (e.g., 0-0 or whatever they were)
+    # --- END OF REPLACEMENT ---
+
+    # Store meta for later use
+    # ... (rest of the function continues as normal) ...
 
     # Store meta for later use
     segment_data.meta = {
@@ -342,19 +359,6 @@ def merge_segments(segments_folder: Path, output_dir: Path, overlap: int = 5):
             xml_path, images = extract_segment_zip(zip_file, temp_dir)
             segment_data = parse_annotation_xml(xml_path)
             segment_data.images = images
-
-            # OPTION: If your XMLs have relative frames (all start at 0),
-            # calculate the offset based on segment position
-            # Uncomment these lines if needed:
-            # if segment_data.start_frame == 0 and i > 0:
-            #     offset = i * (200 - overlap)  # 200 = segment_size, 5 = overlap
-            #     segment_data.start_frame = offset
-            #     segment_data.stop_frame = offset + 199
-            #     # Update all track frame numbers
-            #     for track in segment_data.tracks:
-            #         track.boxes = {(frame + offset): box for frame, box in track.boxes.items()}
-            #     print(f"    ⚠️  Applied frame offset: +{offset} (now frames {segment_data.start_frame}-{segment_data.stop_frame})")
-
             segments_data.append(segment_data)
 
             # Copy images (avoiding duplicates)
@@ -382,31 +386,31 @@ def merge_segments(segments_folder: Path, output_dir: Path, overlap: int = 5):
         print("\n📦 Creating images.zip...")
         images_zip_path = output_dir / 'images.zip'
 
-        try:
-            with zipfile.ZipFile(images_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                all_images = sorted([f for f in output_images_dir.iterdir() if f.is_file()])
-                total_images = len(all_images)
+        # try:
+        #     with zipfile.ZipFile(images_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        #         all_images = sorted([f for f in output_images_dir.iterdir() if f.is_file()])
+        #         total_images = len(all_images)
 
-                for idx, image_file in enumerate(all_images):
-                    # Store images in the root of the ZIP (not in 'images/' subfolder)
-                    zipf.write(image_file, image_file.name)
+        #         for idx, image_file in enumerate(all_images):
+        #             # Store images in the root of the ZIP (not in 'images/' subfolder)
+        #             zipf.write(image_file, image_file.name)
 
-                    # Show progress every 1000 images or at milestones
-                    if (idx + 1) % 1000 == 0 or (idx + 1) == total_images:
-                        print(f"  [{idx + 1}/{total_images}] images compressed")
+        #             # Show progress every 1000 images or at milestones
+        #             if (idx + 1) % 1000 == 0 or (idx + 1) == total_images:
+        #                 print(f"  [{idx + 1}/{total_images}] images compressed")
 
-            # Get ZIP file size
-            zip_size_mb = images_zip_path.stat().st_size / (1024 * 1024)
-            print(f"✅ Created images.zip ({zip_size_mb:.2f} MB)")
+        #     # Get ZIP file size
+        #     zip_size_mb = images_zip_path.stat().st_size / (1024 * 1024)
+        #     print(f"✅ Created images.zip ({zip_size_mb:.2f} MB)")
 
-            # Remove the images folder to save space
-            print(f"🧹 Removing temporary images folder...")
-            shutil.rmtree(output_images_dir)
-            print(f"✅ Cleaned up images folder")
+        #     # Remove the images folder to save space
+        #     print(f"🧹 Removing temporary images folder...")
+        #     shutil.rmtree(output_images_dir)
+        #     print(f"✅ Cleaned up images folder")
 
-        except Exception as e:
-            print(f"⚠️  Warning: Could not create images.zip: {e}")
-            print(f"   Images are still available in: {output_images_dir}")
+        # except Exception as e:
+        #     print(f"⚠️  Warning: Could not create images.zip: {e}")
+        #     print(f"   Images are still available in: {output_images_dir}")
 
         # CRITICAL: Sort segments by start_frame to ensure correct order
         print("\n🔢 Sorting segments by start frame...")
@@ -528,13 +532,17 @@ def merge_segments(segments_folder: Path, output_dir: Path, overlap: int = 5):
                             label=track.label,
                             source=track.source,
                             group_id=track.group_id,
-                            boxes={f: b for f, b in track.boxes.items()
-                                  if f > overlap_end}  # Skip overlap
+                            boxes=track.boxes.copy() # <-- FIX 1: This is a new track, take all its boxes
                         )
-                        if new_track.boxes:  # Only add if has boxes after overlap
-                            merged_tracks.append(new_track)
-                            track_id_mapping[seg_idx][track.id] = next_track_id
-                            next_track_id += 1
+                        
+                        # A track from segment.tracks is guaranteed to have boxes
+                        # (due to the filter in parse_annotation_xml),
+                        # so we can just append it.
+                        merged_tracks.append(new_track)
+                        track_id_mapping[seg_idx][track.id] = next_track_id
+                        
+                        # FIX 2: Always increment the ID for a new track
+                        next_track_id += 1
 
         print(f"✅ Merged into {len(merged_tracks)} unique tracks")
 

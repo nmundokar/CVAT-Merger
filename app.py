@@ -1,4 +1,3 @@
-import os
 import sys
 import zipfile
 import shutil
@@ -386,31 +385,31 @@ def merge_segments(segments_folder: Path, output_dir: Path, overlap: int = 5):
         print("\n📦 Creating images.zip...")
         images_zip_path = output_dir / 'images.zip'
 
-        # try:
-        #     with zipfile.ZipFile(images_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        #         all_images = sorted([f for f in output_images_dir.iterdir() if f.is_file()])
-        #         total_images = len(all_images)
+        try:
+            with zipfile.ZipFile(images_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                all_images = sorted([f for f in output_images_dir.iterdir() if f.is_file()])
+                total_images = len(all_images)
 
-        #         for idx, image_file in enumerate(all_images):
-        #             # Store images in the root of the ZIP (not in 'images/' subfolder)
-        #             zipf.write(image_file, image_file.name)
+                for idx, image_file in enumerate(all_images):
+                    # Store images in the root of the ZIP (not in 'images/' subfolder)
+                    zipf.write(image_file, image_file.name)
 
-        #             # Show progress every 1000 images or at milestones
-        #             if (idx + 1) % 1000 == 0 or (idx + 1) == total_images:
-        #                 print(f"  [{idx + 1}/{total_images}] images compressed")
+                    # Show progress every 1000 images or at milestones
+                    if (idx + 1) % 1000 == 0 or (idx + 1) == total_images:
+                        print(f"  [{idx + 1}/{total_images}] images compressed")
 
-        #     # Get ZIP file size
-        #     zip_size_mb = images_zip_path.stat().st_size / (1024 * 1024)
-        #     print(f"✅ Created images.zip ({zip_size_mb:.2f} MB)")
+            # Get ZIP file size
+            zip_size_mb = images_zip_path.stat().st_size / (1024 * 1024)
+            print(f"✅ Created images.zip ({zip_size_mb:.2f} MB)")
 
-        #     # Remove the images folder to save space
-        #     print(f"🧹 Removing temporary images folder...")
-        #     shutil.rmtree(output_images_dir)
-        #     print(f"✅ Cleaned up images folder")
+            # Remove the images folder to save space
+            print(f"🧹 Removing temporary images folder...")
+            shutil.rmtree(output_images_dir)
+            print(f"✅ Cleaned up images folder")
 
-        # except Exception as e:
-        #     print(f"⚠️  Warning: Could not create images.zip: {e}")
-        #     print(f"   Images are still available in: {output_images_dir}")
+        except Exception as e:
+            print(f"⚠️  Warning: Could not create images.zip: {e}")
+            print(f"   Images are still available in: {output_images_dir}")
 
         # CRITICAL: Sort segments by start_frame to ensure correct order
         print("\n🔢 Sorting segments by start frame...")

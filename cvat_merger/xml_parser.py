@@ -26,7 +26,6 @@ def parse_annotation_xml(xml_path: Path) -> SegmentData:
     tree = ET.parse(xml_path)
     root = tree.getroot()
 
-    # Extract segment info from meta
     meta_elem = root.find('meta')
     job_elem = meta_elem.find('job') if meta_elem is not None else None
 
@@ -39,7 +38,6 @@ def parse_annotation_xml(xml_path: Path) -> SegmentData:
         if id_elem is not None and id_elem.text:
             segment_id = id_elem.text
 
-        # Try to get segment info
         segments_elem = job_elem.find('segments')
         if segments_elem is not None:
             segment_elem = segments_elem.find('segment')
@@ -53,7 +51,6 @@ def parse_annotation_xml(xml_path: Path) -> SegmentData:
 
     segment_data = SegmentData(segment_id, start_frame, stop_frame)
 
-    # Parse tracks
     for track_elem in root.findall('track'):
         track = Track(
             id=int(track_elem.get('id', 0)),
@@ -63,7 +60,6 @@ def parse_annotation_xml(xml_path: Path) -> SegmentData:
             boxes={}
         )
 
-        # Parse all boxes in the track
         for box_elem in track_elem.findall('box'):
             frame = int(box_elem.get('frame'))
             box = parse_box_from_xml(box_elem, frame)
@@ -72,10 +68,6 @@ def parse_annotation_xml(xml_path: Path) -> SegmentData:
         if track.boxes:  # Only add tracks with boxes
             segment_data.tracks.append(track)
 
-    # CRITICAL: ALWAYS verify/calculate frame range from *actual* box data,
-    # as <meta> can be unreliable (e.g., from old task settings).
-    
-    # Store the potentially unreliable meta frames
     meta_start_frame = segment_data.start_frame
     meta_stop_frame = segment_data.stop_frame
 
@@ -88,7 +80,6 @@ def parse_annotation_xml(xml_path: Path) -> SegmentData:
             true_start = min(all_frames)
             true_stop = max(all_frames)
             
-            # Check if meta was present but wrong
             if (meta_start_frame != 0 or meta_stop_frame != 0) and \
                (meta_start_frame != true_start or meta_stop_frame != true_stop):
                 print(f"    ⚠️  WARNING: XML meta ({meta_start_frame}-{meta_stop_frame}) mismatches")
@@ -97,18 +88,12 @@ def parse_annotation_xml(xml_path: Path) -> SegmentData:
             segment_data.start_frame = true_start
             segment_data.stop_frame = true_stop
         
-        # else: no tracks, so we keep the (likely 0-0) meta values
-    
-    # else: no tracks, keep meta values (e.g., 0-0 or whatever they were)
-
-    # Store meta for later use
     segment_data.meta = {
         'task_name': segment_id,
         'start_frame': segment_data.start_frame,
         'stop_frame': segment_data.stop_frame,
     }
 
-    # DEBUG: Print what we parsed
     print(f"    📄 Parsed: {len(segment_data.tracks)} tracks, frames {segment_data.start_frame}-{segment_data.stop_frame}")
     if segment_data.tracks:
         label_counts = {}

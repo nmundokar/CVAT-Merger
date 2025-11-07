@@ -35,11 +35,11 @@ def calculate_track_similarity(track1: Track, track2: Track,
     Calculate similarity between two tracks in the overlap region.
     Returns a score from 0.0 (no match) to 1.0 (perfect match).
     """
-    # Must have same label
-    if track1.label != track2.label:
+    label_mismatch = track1.label != track2.label
+    
+    if label_mismatch:
         if debug:
-            print(f"        Different labels: '{track1.label}' vs '{track2.label}'")
-        return 0.0
+            print(f"        Different labels: '{track1.label}' vs '{track2.label}' - still checking overlap for debugging")
 
     # Get boxes in overlap region
     overlap_frames = range(overlap_start, overlap_end + 1)
@@ -54,16 +54,11 @@ def calculate_track_similarity(track1: Track, track2: Track,
 
         if box1 and box2:
             # Both tracks have boxes in this frame
-            if box1.outside != box2.outside:
-                # One is outside, one is visible - not a match
-                frame_count += 1
-                ious.append(0.0)
-            elif not box1.outside and not box2.outside:
-                # Both visible - calculate IoU
-                iou = calculate_iou(box1, box2)
-                total_similarity += iou
-                frame_count += 1
-                ious.append(iou)
+            iou = calculate_iou(box1, box2)
+            total_similarity += iou
+            frame_count += 1
+            ious.append(iou)
+                
         elif box1 or box2:
             # Only one track has a box - penalize
             frame_count += 1
@@ -74,8 +69,9 @@ def calculate_track_similarity(track1: Track, track2: Track,
 
     avg_similarity = total_similarity / frame_count
 
-    if debug and avg_similarity > 0.3:  # Only show promising matches
-        print(f"        Labels: '{track1.label}' vs '{track2.label}'")
+    if debug and avg_similarity > 0.3:
+        label_info = f" (LABEL MISMATCH: '{track1.label}' vs '{track2.label}')" if label_mismatch else ""
+        print(f"        Labels: '{track1.label}' vs '{track2.label}'{label_info}")
         print(f"        IoUs by frame: {[f'{x:.3f}' for x in ious[:5]]}")
         print(f"        Average IoU: {avg_similarity:.3f}")
 

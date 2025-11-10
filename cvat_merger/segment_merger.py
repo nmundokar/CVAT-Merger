@@ -2,6 +2,8 @@ from pathlib import Path
 from typing import List, Dict
 from collections import defaultdict
 import shutil
+import time
+import sys
 from .models import SegmentData, Track
 from .xml_parser import parse_annotation_xml
 from .file_utils import extract_segment_zip, find_images_directory, copy_images_to_output, create_images_zip
@@ -25,6 +27,8 @@ class SegmentMerger:
             xml_path, images = extract_segment_zip(zip_file, temp_dir)
             segment_data = parse_annotation_xml(xml_path)
             segment_data.images = images
+            # Store the extracted directory name (ZIP stem) for path reconstruction
+            segment_data.extracted_dir_name = zip_file.stem
             segments_data.append(segment_data)
         
         print(f"✅ Extracted {len(segments_data)} segments")
@@ -35,19 +39,43 @@ class SegmentMerger:
         """Copy all images from segments to output directory"""
         all_image_files = set()
         
-        for segment_data in segments_data:
-            # Find the XML path (we need to reconstruct it)
-            xml_path = temp_dir / segment_data.segment_name / 'annotations.xml'
+        print(f"\n📸 Copying images from {len(segments_data)} segments...")
+        
+        for seg_idx, segment_data in enumerate(segments_data):
+            print(f"  Segment {seg_idx + 1}: {segment_data.segment_name}")
+            print(f"    Found {len(segment_data.images)} images in segment list")
+            
+            # Find the XML path using the extracted directory name (ZIP stem)
+            if hasattr(segment_data, 'extracted_dir_name') and segment_data.extracted_dir_name:
+                extracted_dir = temp_dir / segment_data.extracted_dir_name
+            else:
+                # Fallback: try using segment_name (old behavior)
+                extracted_dir = temp_dir / segment_data.segment_name
+            
+            xml_path = extracted_dir / 'annotations.xml'
             if not xml_path.exists():
-                xml_files = list((temp_dir / segment_data.segment_name).rglob('*.xml'))
+                xml_files = list(extracted_dir.rglob('*.xml'))
                 if xml_files:
                     xml_path = xml_files[0]
             
+            if not xml_path.exists():
+                print(f"    ⚠️  Warning: Could not find XML path for segment {segment_data.segment_name}")
+                print(f"    Tried: {xml_path}")
+                print(f"    Extracted dir: {extracted_dir}")
+                continue
+            
             images_src_dir = find_images_directory(xml_path)
+            print(f"    Looking for images in: {images_src_dir}")
+            print(f"    Images directory exists: {images_src_dir.exists()}")
+            
+            if images_src_dir.exists():
+                actual_files = list(images_src_dir.glob('*.*'))
+                print(f"    Found {len(actual_files)} files in images directory")
+            
             copy_images_to_output(images_src_dir, segment_data.images, 
                                 output_images_dir, all_image_files)
         
-        print(f"📸 Copied {len(all_image_files)} unique images")
+        print(f"\n📸 Total: Copied {len(all_image_files)} unique images to {output_images_dir}")
         return all_image_files
     
     def sort_segments(self, segments_data: List[SegmentData]) -> List[SegmentData]:
@@ -254,38 +282,61 @@ class SegmentMerger:
         output_images_dir.mkdir(parents=True, exist_ok=True)
         
         try:
-            # Extract and parse segments
             segments_data = self.extract_and_parse_segments(zip_files, temp_dir)
-            
-            # Copy images
             all_image_files = self.copy_all_images(segments_data, output_images_dir, temp_dir)
             
-            # Create images.zip (if requested)
             if create_images_zip:
                 print("\n📦 Creating images.zip...")
-                # Use the imported function (avoiding name shadowing)
+                # Verify images directory exists and has files before creating ZIP
+                if output_images_dir.exists():
+                    file_count = len([f for f in output_images_dir.iterdir() if f.is_file()])
+                    print(f"  Verifying: {file_count} files in {output_images_dir.name}/ directory")
+                else:
+                    print(f"  ⚠️  Warning: Images directory does not exist: {output_images_dir}")
+                
                 from .file_utils import create_images_zip as create_zip_func
                 create_zip_func(output_images_dir, output_dir)
             else:
                 print("\n⏭️  Skipping images.zip creation (--images=False)")
             
-            # Sort segments
             segments_data = self.sort_segments(segments_data)
             
-            # Merge tracks
             merged_tracks = self.merge_tracks(segments_data)
             
-            # Generate XML
             print("\n📝 Generating merged annotation XML...")
             output_xml_path = output_dir / 'annotations.xml'
             generate_merged_xml(segments_data, merged_tracks, output_xml_path)
             print(f"✅ Saved to: {output_xml_path}")
             
-            # Print statistics
             self.print_statistics(segments_data, merged_tracks, all_image_files)
         
         finally:
             print("\n🧹 Cleaning up temporary files...")
             if temp_dir.exists():
-                shutil.rmtree(temp_dir)
+                # On Windows, files might be locked - retry with delays
+                max_retries = 5
+                retry_delay = 1.0  # Start with 1 second delay
+                
+                for attempt in range(max_retries):
+                    try:
+                        shutil.rmtree(temp_dir)
+                        print(f"✅ Cleaned up temporary extraction directory")
+                        break
+                    except (PermissionError, OSError) as e:
+                        if attempt < max_retries - 1:
+                            # Wait and retry with increasing delay
+                            print(f"  Retrying cleanup (attempt {attempt + 1}/{max_retries})...")
+                            time.sleep(retry_delay)
+                            retry_delay *= 1.5  # Exponential backoff
+                        else:
+                            # Last attempt failed
+                            print(f"⚠️  Warning: Could not delete temporary directory: {e}")
+                            print(f"   Temporary files remain at: {temp_dir}")
+                            if sys.platform == 'win32':
+                                print(f"   This is often caused by file handles still being open.")
+                                print(f"   You may need to manually delete this folder later.")
+                    except Exception as e:
+                        print(f"⚠️  Warning: Unexpected error during cleanup: {e}")
+                        print(f"   Temporary files remain at: {temp_dir}")
+                        break
 

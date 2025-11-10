@@ -1,6 +1,8 @@
 from pathlib import Path
 import zipfile
 import shutil
+import time
+import sys
 from typing import Tuple, List, Optional
 
 
@@ -33,7 +35,11 @@ def extract_segment_zip(zip_path: Path, extract_dir: Path) -> Tuple[Path, List[s
     image_files = []
     if images_dir.exists():
         for ext in ['*.jpg', '*.jpeg', '*.png', '*.bmp']:
-            image_files.extend([str(f.name) for f in images_dir.glob(ext)])
+            found = list(images_dir.glob(ext))
+            image_files.extend([str(f.name) for f in found])
+        print(f"    Found {len(image_files)} image files in {images_dir.name}/")
+    else:
+        print(f"    ⚠️  Images directory not found: {images_dir}")
 
     return xml_path, sorted(image_files)
 
@@ -53,7 +59,16 @@ def copy_images_to_output(images_src_dir: Path, images: List[str],
                          output_images_dir: Path, all_image_files: set):
     """Copy images to output directory, avoiding duplicates"""
     if not images_src_dir.exists():
+        print(f"    ⚠️  Images source directory does not exist: {images_src_dir}")
         return
+    
+    if not images:
+        print(f"    ⚠️  No images listed for this segment")
+        return
+    
+    copied_count = 0
+    skipped_count = 0
+    duplicate_count = 0
     
     for img_file in images:
         if img_file not in all_image_files:
@@ -62,6 +77,14 @@ def copy_images_to_output(images_src_dir: Path, images: List[str],
             if src.exists():
                 shutil.copy2(src, dst)
                 all_image_files.add(img_file)
+                copied_count += 1
+            else:
+                skipped_count += 1
+        else:
+            duplicate_count += 1
+    
+    if copied_count > 0 or skipped_count > 0 or duplicate_count > 0:
+        print(f"    Copied: {copied_count}, Skipped (not found): {skipped_count}, Duplicates: {duplicate_count}")
 
 
 def create_images_zip(output_images_dir: Path, output_dir: Path) -> Optional[Path]:
@@ -69,10 +92,26 @@ def create_images_zip(output_images_dir: Path, output_dir: Path) -> Optional[Pat
     images_zip_path = output_dir / 'images.zip'
     
     try:
+        # Check if directory exists
+        if not output_images_dir.exists():
+            print(f"⚠️  Warning: Images directory does not exist: {output_images_dir}")
+            return None
+        
+        # Get all image files
+        all_images = sorted([f for f in output_images_dir.iterdir() if f.is_file()])
+        total_images = len(all_images)
+        
+        if total_images == 0:
+            print(f"⚠️  Warning: No images found in {output_images_dir}")
+            print(f"   Skipping ZIP creation (no images to compress).")
+            # Remove empty ZIP if it exists
+            if images_zip_path.exists():
+                images_zip_path.unlink()
+            return None
+        
+        print(f"  Found {total_images} images to compress...")
+        
         with zipfile.ZipFile(images_zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            all_images = sorted([f for f in output_images_dir.iterdir() if f.is_file()])
-            total_images = len(all_images)
-
             for idx, image_file in enumerate(all_images):
                 # Store images in the root of the ZIP (not in 'images/' subfolder)
                 zipf.write(image_file, image_file.name)
@@ -85,10 +124,14 @@ def create_images_zip(output_images_dir: Path, output_dir: Path) -> Optional[Pat
         zip_size_mb = images_zip_path.stat().st_size / (1024 * 1024)
         print(f"✅ Created images.zip ({zip_size_mb:.2f} MB)")
 
-        # Remove the images folder to save space
+        # Remove the images folder to save space (separate try-except for better error handling)
         print(f"🧹 Removing temporary images folder...")
-        shutil.rmtree(output_images_dir)
-        print(f"✅ Cleaned up images folder")
+        try:            
+            shutil.rmtree(output_images_dir)
+            print(f"✅ Cleaned up images folder")
+        except Exception as e:
+            print(f"⚠️  Warning: Error during cleanup: {e}")
+            print(f"   Images folder still exists at: {output_images_dir}")
         
         return images_zip_path
     except Exception as e:

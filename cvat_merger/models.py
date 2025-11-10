@@ -40,4 +40,5 @@ class SegmentData:
         self.tags: List = []
         self.images: List[str] = []
         self.meta: Dict = {}
+        self.extracted_dir_name: str = ""  # ZIP file stem (directory name after extraction)
 
